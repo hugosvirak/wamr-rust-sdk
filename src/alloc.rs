@@ -4,29 +4,39 @@ use std::{
     ptr::{self, null_mut},
 };
 
-use buddy_system_allocator::LockedHeap;
+use embedded_alloc::LlffHeap;
 use wamr_sys::{mem_alloc_usage_t, mem_alloc_usage_t_Alloc_For_LinearMemory};
 
-const HEAP_ORDER: usize = 33;
-const ALIGNMENT: usize = 8;
+const ALIGNMENT: usize = std::mem::align_of::<AllocationHeader>();
 
 #[repr(C)]
 struct AllocationHeader {
     size: usize,
 }
 
-#[derive(Default)]
 pub struct CustomMemoryPoolData {
-    pub linear_memory_allocator: LockedHeap<HEAP_ORDER>,
+    pub linear_memory_allocator: LlffHeap,
     pub linear_memory_pool: Option<Box<[u8]>>,
 
-    pub runtime_memory_allocator: LockedHeap<HEAP_ORDER>,
+    pub runtime_memory_allocator: LlffHeap,
     pub runtime_memory_pool: Option<Box<[u8]>>,
+}
+
+impl Default for CustomMemoryPoolData {
+    fn default() -> Self {
+        Self {
+            linear_memory_allocator: LlffHeap::empty(),
+            linear_memory_pool: None,
+
+            runtime_memory_allocator: LlffHeap::empty(),
+            runtime_memory_pool: None,
+        }
+    }
 }
 
 impl CustomMemoryPoolData {
     #[inline]
-    fn allocator(&self, usage: mem_alloc_usage_t) -> &LockedHeap<HEAP_ORDER> {
+    fn allocator(&self, usage: mem_alloc_usage_t) -> &LlffHeap {
         if usage == mem_alloc_usage_t_Alloc_For_LinearMemory {
             &self.linear_memory_allocator
         } else {
@@ -37,19 +47,19 @@ impl CustomMemoryPoolData {
     pub fn init(&self) {
         if let Some(ref linear_memory_pool) = self.linear_memory_pool {
             unsafe {
-                self.linear_memory_allocator.lock().init(
+                self.linear_memory_allocator.init(
                     linear_memory_pool.as_ptr() as usize,
                     linear_memory_pool.len(),
-                )
+                );
             }
         }
 
         if let Some(ref runtime_memory_pool) = self.runtime_memory_pool {
             unsafe {
-                self.runtime_memory_allocator.lock().init(
+                self.runtime_memory_allocator.init(
                     runtime_memory_pool.as_ptr() as usize,
                     runtime_memory_pool.len(),
-                )
+                );
             }
         }
     }
@@ -160,16 +170,13 @@ pub unsafe extern "C" fn realloc_func(
     // realloc(ptr, 0) behaves like free(ptr).
     if size == 0 {
         free_func(usage, user_data, ptr);
-
         return null_mut();
     }
 
     let data = &*(user_data as *const CustomMemoryPoolData);
 
     let header_ptr = get_header(ptr);
-
     let old_header = &*header_ptr;
-
     let old_size = old_header.size;
 
     let header_size = std::mem::size_of::<AllocationHeader>();
@@ -193,7 +200,8 @@ pub unsafe extern "C" fn realloc_func(
 
     let allocator = data.allocator(usage);
 
-    let new_raw = allocator.realloc(header_ptr as *mut u8, old_layout, new_total_size);
+    let new_raw =
+        allocator.realloc(header_ptr as *mut u8, old_layout, new_total_size);
 
     if new_raw.is_null() {
         // Original allocation remains valid.
@@ -210,21 +218,24 @@ pub unsafe extern "C" fn realloc_func(
 
 #[cfg(test)]
 mod tests {
-    use wamr_sys::mem_alloc_usage_t_Alloc_For_Runtime;
-
     use super::*;
     use std::ptr;
+    use wamr_sys::mem_alloc_usage_t_Alloc_For_Runtime;
 
     const LINEAR_POOL_SIZE: usize = 64 * 1024;
     const RUNTIME_POOL_SIZE: usize = 64 * 1024;
 
     fn create_test_data() -> Box<CustomMemoryPoolData> {
         let data = Box::new(CustomMemoryPoolData {
-            linear_memory_allocator: LockedHeap::<HEAP_ORDER>::empty(),
-            linear_memory_pool: Some(vec![0u8; LINEAR_POOL_SIZE].into_boxed_slice()),
+            linear_memory_allocator: LlffHeap::empty(),
+            linear_memory_pool: Some(
+                vec![0u8; LINEAR_POOL_SIZE].into_boxed_slice(),
+            ),
 
-            runtime_memory_allocator: LockedHeap::<HEAP_ORDER>::empty(),
-            runtime_memory_pool: Some(vec![0u8; RUNTIME_POOL_SIZE].into_boxed_slice()),
+            runtime_memory_allocator: LlffHeap::empty(),
+            runtime_memory_pool: Some(
+                vec![0u8; RUNTIME_POOL_SIZE].into_boxed_slice(),
+            ),
         });
 
         data.init();
@@ -250,12 +261,9 @@ mod tests {
 
         assert!(!ptr.is_null());
 
-        // Verify that the returned memory is writable.
         unsafe {
             ptr::write_bytes(ptr, 0xAB, 128);
-        }
 
-        unsafe {
             free_func(
                 mem_alloc_usage_t_Alloc_For_LinearMemory,
                 user_data(&data),
@@ -267,26 +275,44 @@ mod tests {
     #[test]
     fn alloc_and_free_reuses_memory() {
         let data = create_test_data();
-
         let user_data = user_data(&data);
 
-        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 256) };
+        let ptr = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                256,
+            )
+        };
 
         assert!(!ptr.is_null());
 
         unsafe {
             ptr::write_bytes(ptr, 0xCD, 256);
 
-            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                ptr,
+            );
         }
 
-        // The allocator should still be usable after free.
-        let ptr2 = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 256) };
+        let ptr2 = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                256,
+            )
+        };
 
         assert!(!ptr2.is_null());
 
         unsafe {
-            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr2);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                ptr2,
+            );
         }
     }
 
@@ -295,7 +321,13 @@ mod tests {
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 128) };
+        let ptr = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                128,
+            )
+        };
 
         assert!(!ptr.is_null());
 
@@ -317,15 +349,19 @@ mod tests {
 
         assert!(!new_ptr.is_null());
 
-        // Original data must still be present.
         unsafe {
             for i in 0..128 {
-                assert_eq!(*(new_ptr as *const u8).add(i), i as u8);
+                assert_eq!(
+                    *(new_ptr as *const u8).add(i),
+                    i as u8
+                );
             }
-        }
 
-        unsafe {
-            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, new_ptr);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                new_ptr,
+            );
         }
     }
 
@@ -334,7 +370,13 @@ mod tests {
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 256) };
+        let ptr = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                256,
+            )
+        };
 
         assert!(!ptr.is_null());
 
@@ -358,12 +400,17 @@ mod tests {
 
         unsafe {
             for i in 0..128 {
-                assert_eq!(*(new_ptr as *const u8).add(i), (i & 0xFF) as u8);
+                assert_eq!(
+                    *(new_ptr as *const u8).add(i),
+                    (i & 0xFF) as u8
+                );
             }
-        }
 
-        unsafe {
-            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, new_ptr);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                new_ptr,
+            );
         }
     }
 
@@ -385,7 +432,11 @@ mod tests {
         assert!(!ptr.is_null());
 
         unsafe {
-            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                ptr,
+            );
         }
     }
 
@@ -394,7 +445,13 @@ mod tests {
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 128) };
+        let ptr = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                128,
+            )
+        };
 
         assert!(!ptr.is_null());
 
@@ -410,13 +467,22 @@ mod tests {
 
         assert!(result.is_null());
 
-        // Verify allocator is still usable.
-        let ptr2 = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 128) };
+        let ptr2 = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                128,
+            )
+        };
 
         assert!(!ptr2.is_null());
 
         unsafe {
-            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr2);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                ptr2,
+            );
         }
     }
 
@@ -425,12 +491,22 @@ mod tests {
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_Runtime, user_data, 128) };
+        let ptr = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_Runtime,
+                user_data,
+                128,
+            )
+        };
 
         assert!(!ptr.is_null());
 
         unsafe {
-            free_func(mem_alloc_usage_t_Alloc_For_Runtime, user_data, ptr);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_Runtime,
+                user_data,
+                ptr,
+            );
         }
     }
 
@@ -442,35 +518,96 @@ mod tests {
         let mut allocations = Vec::new();
 
         for size in [16, 32, 64, 128, 256, 512, 1024] {
-            let ptr =
-                unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, size) };
+            let ptr = unsafe {
+                malloc_func(
+                    mem_alloc_usage_t_Alloc_For_LinearMemory,
+                    user_data,
+                    size,
+                )
+            };
 
-            assert!(!ptr.is_null(), "allocation of {} bytes failed", size);
+            assert!(
+                !ptr.is_null(),
+                "allocation of {} bytes failed",
+                size
+            );
 
-            allocations.push((ptr, size));
+            unsafe {
+                ptr::write_bytes(ptr, 0x5A, size as usize);
+            }
+
+            allocations.push(ptr);
         }
 
-        // Write to every allocation.
-        for (ptr, size) in &allocations {
+        for ptr in allocations {
             unsafe {
-                ptr::write_bytes(*ptr, 0x5A, *size as usize);
+                free_func(
+                    mem_alloc_usage_t_Alloc_For_LinearMemory,
+                    user_data,
+                    ptr,
+                );
             }
         }
 
-        // Free everything.
-        for (ptr, _) in allocations {
-            unsafe {
-                free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
-            }
-        }
-
-        // The entire pool should be usable again.
-        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 1024) };
+        let ptr = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                1024,
+            )
+        };
 
         assert!(!ptr.is_null());
 
         unsafe {
-            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                ptr,
+            );
+        }
+    }
+
+    #[test]
+    fn large_non_power_of_two_allocation() {
+        let data = Box::new(CustomMemoryPoolData {
+            linear_memory_allocator: LlffHeap::empty(),
+            linear_memory_pool: Some(
+                vec![0u8; 3 * 1024 * 1024].into_boxed_slice(),
+            ),
+
+            runtime_memory_allocator: LlffHeap::empty(),
+            runtime_memory_pool: Some(
+                vec![0u8; RUNTIME_POOL_SIZE].into_boxed_slice(),
+            ),
+        });
+
+        data.init();
+
+        let user_data = user_data(&data);
+
+        // This is the kind of allocation that was problematic
+        // with the buddy allocator because it was rounded to 2 MiB.
+        let size = 1_114_112;
+
+        let ptr = unsafe {
+            malloc_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                size,
+            )
+        };
+
+        assert!(!ptr.is_null());
+
+        unsafe {
+            ptr::write_bytes(ptr, 0xA5, size as usize);
+
+            free_func(
+                mem_alloc_usage_t_Alloc_For_LinearMemory,
+                user_data,
+                ptr,
+            );
         }
     }
 }

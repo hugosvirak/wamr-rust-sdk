@@ -110,7 +110,15 @@ mod tests {
 
     #[test]
     fn test_instance_new() {
-        let runtime = Rc::new(Runtime::new().unwrap());
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 512].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build()
+            .unwrap();
+
+        let runtime = Rc::new(runtime);
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
@@ -151,7 +159,15 @@ mod tests {
     #[test]
     #[ignore]
     fn test_instance_running_mode_default() {
-        let runtime = Rc::new(Runtime::builder().use_system_allocator().build().unwrap());
+        let runtime = Rc::new(
+            Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
+                .build()
+                .unwrap(),
+        );
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
@@ -192,7 +208,10 @@ mod tests {
         let runtime = Rc::new(
             Runtime::builder()
                 .run_as_interpreter()
-                .use_system_allocator()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
                 .build()
                 .unwrap(),
         );

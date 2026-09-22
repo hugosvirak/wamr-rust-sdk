@@ -162,7 +162,15 @@ mod tests {
 
     #[test]
     fn test_func_in_wasm32_unknown() {
-        let runtime = Rc::new(Runtime::new().unwrap());
+        let runtime = Rc::new(
+            Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
+                .build()
+                .unwrap(),
+        );
 
         // (module
         //   (func (export "add") (param i64 i32) (result i32 i64)
@@ -233,7 +241,15 @@ mod tests {
 
     #[test]
     fn test_func_in_wasm32_wasi() {
-        let runtime = Rc::new(Runtime::new().unwrap());
+        let runtime = Rc::new(
+            Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
+                .build()
+                .unwrap(),
+        );
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test");
@@ -267,7 +283,15 @@ mod tests {
 
     #[test]
     fn test_func_in_wasm32_wasi_w_args() {
-        let runtime = Rc::new(Runtime::new().unwrap());
+        let runtime = Rc::new(
+            Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 1024].into_boxed_slice(),
+                    vec![0; 1024 * 4024].into_boxed_slice(),
+                )
+                .build()
+                .unwrap(),
+        );
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test");
@@ -297,7 +321,15 @@ mod tests {
 
     #[test]
     fn test_func_in_multi_v128_return() {
-        let runtime = Rc::new(Runtime::new().unwrap());
+        let runtime = Rc::new(
+            Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
+                .build()
+                .unwrap(),
+        );
 
         // (module
         // (func (export "multi") (result f64 f32 i32 i64 f64 f32 i32 i64 v128 v128 v128 v128)

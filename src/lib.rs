@@ -119,7 +119,10 @@
 //!
 //! fn main() -> Result<(), RuntimeError> {
 //!     let runtime = Runtime::builder()
-//!         .use_system_allocator()
+//!          .use_memory_pool(
+//!              vec![0; 1024 * 512].into_boxed_slice(),
+//!              vec![0; 1024 * 2024].into_boxed_slice(),
+//!         )
 //!         .register_host_function("extra", extra as *mut c_void)
 //!         .build()?;
 //!

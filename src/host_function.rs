@@ -81,11 +81,10 @@ mod tests {
     fn test_host_function() {
         let runtime = Rc::new(
             Runtime::builder()
-                // .use_system_allocator()
                 .register_host_function("extra", extra as *mut c_void)
                 .use_memory_pool(
-                    vec![0; 100 * 1024].into_boxed_slice(),
-                    vec![0; 100 * 1024].into_boxed_slice(),
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
                 )
                 .build()
                 .unwrap(),

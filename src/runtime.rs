@@ -10,9 +10,9 @@
 use std::ffi::c_void;
 
 use wamr_sys::{
-    mem_alloc_type_t_Alloc_With_Allocator, mem_alloc_type_t_Alloc_With_System_Allocator,
-    wasm_runtime_destroy, wasm_runtime_full_init, wasm_runtime_init, MemAllocOption__bindgen_ty_2,
-    NativeSymbol, RunningMode_Mode_Interp, RunningMode_Mode_LLVM_JIT, RuntimeInitArgs,
+    mem_alloc_type_t_Alloc_With_Allocator, wasm_runtime_destroy, wasm_runtime_full_init,
+    MemAllocOption__bindgen_ty_2, NativeSymbol, RunningMode_Mode_Interp, RunningMode_Mode_LLVM_JIT,
+    RuntimeInitArgs,
 };
 
 use crate::{
@@ -37,22 +37,23 @@ impl Runtime {
         RuntimeBuilder::default()
     }
 
-    /// create a new `Runtime` instance with the default configuration which includes:
-    /// - system allocator mode
-    /// - the default running mode
-    ///
-    /// # Errors
-    ///
-    /// if the runtime initialization failed, it will return `RuntimeError::InitializationFailure`
-    pub fn new() -> Result<Self, RuntimeError> {
-        match unsafe { wasm_runtime_init() } {
-            true => Ok(Runtime {
-                host_functions: HostFunctionList::new("empty"),
-                custom_memory_pool_data: Box::new(CustomMemoryPoolData::default()),
-            }),
-            false => Err(RuntimeError::InitializationFailure),
-        }
-    }
+    // Temporarily disabled because system allocator mode is not working
+    // create a new `Runtime` instance with the default configuration which includes:
+    // - system allocator mode (not working)
+    // - the default running mode
+    //
+    // # Errors
+    //
+    // if the runtime initialization failed, it will return `RuntimeError::InitializationFailure`
+    // pub fn new() -> Result<Self, RuntimeError> {
+    //     match unsafe { wasm_runtime_init() } {
+    //         true => Ok(Runtime {
+    //             host_functions: HostFunctionList::new("empty"),
+    //             custom_memory_pool_data: Box::new(CustomMemoryPoolData::default()),
+    //         }),
+    //         false => Err(RuntimeError::InitializationFailure),
+    //     }
+    // }
 }
 
 impl Drop for Runtime {
@@ -86,10 +87,11 @@ impl Default for RuntimeBuilder {
 impl RuntimeBuilder {
     /// system allocator mode
     /// allocate memory from system allocator for runtime consumed memory
-    pub fn use_system_allocator(mut self) -> RuntimeBuilder {
-        self.args.mem_alloc_type = mem_alloc_type_t_Alloc_With_System_Allocator;
-        self
-    }
+    // TODO: bring this back. Currently it's only possible to use the use_memory_pool
+    // pub fn use_system_allocator(mut self) -> RuntimeBuilder {
+    //     self.args.mem_alloc_type = mem_alloc_type_t_Alloc_With_System_Allocator;
+    //     self
+    // }
 
     // Uses custom memory pools for the runtime and linear data
     pub fn use_memory_pool(
@@ -170,7 +172,13 @@ mod tests {
     #[test]
     #[ignore]
     fn test_runtime_new() {
-        let runtime = Runtime::new();
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 512].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build();
+
         assert!(runtime.is_ok());
 
         /* use malloc to confirm */
@@ -185,13 +193,28 @@ mod tests {
         assert!(small_buf.is_null());
 
         {
-            let runtime = Runtime::new();
+            let runtime = Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
+                .build();
             assert!(runtime.is_ok());
 
-            let runtime = Runtime::new();
+            let runtime = Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
+                .build();
             assert!(runtime.is_ok());
 
-            let runtime = Runtime::new();
+            let runtime = Runtime::builder()
+                .use_memory_pool(
+                    vec![0; 1024 * 512].into_boxed_slice(),
+                    vec![0; 1024 * 2024].into_boxed_slice(),
+                )
+                .build();
             assert!(runtime.is_ok());
         }
 
@@ -203,7 +226,12 @@ mod tests {
     #[test]
     fn test_runtime_builder_default() {
         // use Mode_Default
-        let runtime = Runtime::builder().use_system_allocator().build();
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 512].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build();
         assert!(runtime.is_ok());
 
         let small_buf = unsafe { wasm_runtime_malloc(16) };
@@ -215,7 +243,10 @@ mod tests {
     fn test_runtime_builder_interpreter() {
         let runtime = Runtime::builder()
             .run_as_interpreter()
-            .use_system_allocator()
+            .use_memory_pool(
+                vec![0; 1024 * 512].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
             .build();
         assert!(runtime.is_ok());
 
@@ -230,7 +261,10 @@ mod tests {
     fn test_runtime_builder_llvm_jit() {
         let runtime = Runtime::builder()
             .run_as_llvm_jit(3, 3)
-            .use_system_allocator()
+            .use_memory_pool(
+                vec![0; 1024 * 512].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
             .build();
         assert!(runtime.is_ok());
 

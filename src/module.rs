@@ -206,10 +206,13 @@ mod tests {
 
     #[test]
     fn test_module_not_exist() {
-        let runtime = Runtime::new();
-        assert!(runtime.is_ok());
-
-        let runtime = runtime.unwrap();
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 512].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build()
+            .unwrap();
 
         let module = Module::from_file(runtime.into(), Path::new("not_exist"));
         assert!(module.is_err());
@@ -217,7 +220,13 @@ mod tests {
 
     #[test]
     fn test_module_from_buf() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 16].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build()
+            .unwrap();
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
@@ -239,7 +248,13 @@ mod tests {
 
     #[test]
     fn test_module_from_file() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 256].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build()
+            .unwrap();
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test");
@@ -250,7 +265,13 @@ mod tests {
 
     #[test]
     fn test_module_with_wasi_args() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 1024].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build()
+            .unwrap();
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
@@ -282,7 +303,13 @@ mod tests {
 
     #[test]
     fn test_module_name() -> Result<(), RuntimeError> {
-        let runtime = Runtime::new()?;
+        let runtime = Runtime::builder()
+            .use_memory_pool(
+                vec![0; 1024 * 512].into_boxed_slice(),
+                vec![0; 1024 * 2024].into_boxed_slice(),
+            )
+            .build()
+            .unwrap();
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
