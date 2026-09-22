@@ -8,7 +8,8 @@
 
 #![allow(unused_variables)]
 
-use core::{ffi::c_char, marker::PhantomData};
+use core::ffi::c_char;
+use std::rc::Rc;
 
 use wamr_sys::{
     wasm_module_inst_t, wasm_runtime_deinstantiate, wasm_runtime_destroy_thread_env,
@@ -16,28 +17,22 @@ use wamr_sys::{
 };
 
 use crate::{
-    helper::error_buf_to_string, helper::DEFAULT_ERROR_BUF_SIZE, module::Module, runtime::Runtime,
-    RuntimeError,
+    helper::error_buf_to_string, helper::DEFAULT_ERROR_BUF_SIZE, module::Module, RuntimeError,
 };
 
-#[derive(Debug)]
-pub struct Instance<'module> {
+pub struct Instance {
     instance: wasm_module_inst_t,
-    _phantom: PhantomData<Module<'module>>,
+    _module: Rc<Module>,
 }
 
-impl<'module> Instance<'module> {
+impl Instance {
     /// instantiate a module with stack size
     ///
     /// # Error
     ///
     /// Return `RuntimeError::CompilationError` if failed.
-    pub fn new(
-        runtime: &Runtime,
-        module: &'module Module<'module>,
-        stack_size: u32,
-    ) -> Result<Self, RuntimeError> {
-        Self::new_with_args(runtime, module, stack_size, 0)
+    pub fn new(module: Rc<Module>, stack_size: u32) -> Result<Self, RuntimeError> {
+        Self::new_with_args(module, stack_size, 0)
     }
 
     /// instantiate a module with stack size and host managed heap size
@@ -48,8 +43,7 @@ impl<'module> Instance<'module> {
     ///
     /// Return `RuntimeError::CompilationError` if failed.
     pub fn new_with_args(
-        _runtime: &Runtime,
-        module: &'module Module<'module>,
+        module: Rc<Module>,
         stack_size: u32,
         heap_size: u32,
     ) -> Result<Self, RuntimeError> {
@@ -88,7 +82,7 @@ impl<'module> Instance<'module> {
 
         Ok(Instance {
             instance,
-            _phantom: PhantomData,
+            _module: module,
         })
     }
 
@@ -97,7 +91,7 @@ impl<'module> Instance<'module> {
     }
 }
 
-impl Drop for Instance<'_> {
+impl Drop for Instance {
     fn drop(&mut self) {
         unsafe {
             wasm_runtime_destroy_thread_env();
@@ -116,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_instance_new() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Rc::new(Runtime::new().unwrap());
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
@@ -132,15 +126,15 @@ mod tests {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let module = Module::from_vec(&runtime, binary, "add");
+        let module = Module::from_vec(runtime.clone(), binary, "add");
         assert!(module.is_ok());
 
-        let module = &module.unwrap();
+        let module = Rc::new(module.unwrap());
 
-        let instance = Instance::new_with_args(&runtime, module, 1024, 1024);
+        let instance = Instance::new_with_args(module.clone(), 1024, 1024);
         assert!(instance.is_ok());
 
-        let instance = Instance::new_with_args(&runtime, module, 1024, 0);
+        let instance = Instance::new_with_args(module.clone(), 1024, 0);
         assert!(instance.is_ok());
 
         let instance = instance.unwrap();
@@ -157,7 +151,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_instance_running_mode_default() {
-        let runtime = Runtime::builder().use_system_allocator().build().unwrap();
+        let runtime = Rc::new(Runtime::builder().use_system_allocator().build().unwrap());
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
@@ -173,12 +167,12 @@ mod tests {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let module = Module::from_vec(&runtime, binary, "");
+        let module = Module::from_vec(runtime.clone(), binary, "");
         assert!(module.is_ok());
 
-        let module = &module.unwrap();
+        let module = Rc::new(module.unwrap());
 
-        let instance = Instance::new_with_args(&runtime, module, 1024, 1024);
+        let instance = Instance::new_with_args(module, 1024, 1024);
         assert!(instance.is_ok());
 
         let instance = instance.unwrap();
@@ -195,11 +189,13 @@ mod tests {
     #[test]
     #[ignore]
     fn test_instance_running_mode_interpreter() {
-        let runtime = Runtime::builder()
-            .run_as_interpreter()
-            .use_system_allocator()
-            .build()
-            .unwrap();
+        let runtime = Rc::new(
+            Runtime::builder()
+                .run_as_interpreter()
+                .use_system_allocator()
+                .build()
+                .unwrap(),
+        );
 
         // (module
         //   (func (export "add") (param i32 i32) (result i32)
@@ -215,12 +211,12 @@ mod tests {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let module = Module::from_vec(&runtime, binary, "add");
+        let module = Module::from_vec(runtime.clone(), binary, "add");
         assert!(module.is_ok());
 
-        let module = &module.unwrap();
+        let module = Rc::new(module.unwrap());
 
-        let instance = Instance::new_with_args(&runtime, module, 1024, 1024);
+        let instance = Instance::new_with_args(module, 1024, 1024);
         assert!(instance.is_ok());
 
         let instance = instance.unwrap();

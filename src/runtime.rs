@@ -7,22 +7,24 @@
 //! Every process should have only one instance of this runtime by call
 //! `Runtime::new()` or `Runtime::builder().build()` once.
 
-
 use std::ffi::c_void;
 
 use wamr_sys::{
-    mem_alloc_type_t_Alloc_With_Allocator,
-    mem_alloc_type_t_Alloc_With_System_Allocator,
+    mem_alloc_type_t_Alloc_With_Allocator, mem_alloc_type_t_Alloc_With_System_Allocator,
     wasm_runtime_destroy, wasm_runtime_full_init, wasm_runtime_init, MemAllocOption__bindgen_ty_2,
     NativeSymbol, RunningMode_Mode_Interp, RunningMode_Mode_LLVM_JIT, RuntimeInitArgs,
 };
 
-use crate::{RuntimeError, alloc::{CustomMemoryPoolData, free_func, malloc_func, realloc_func}, host_function::HostFunctionList};
+use crate::{
+    alloc::{free_func, malloc_func, realloc_func, CustomMemoryPoolData},
+    host_function::HostFunctionList,
+    RuntimeError,
+};
 
 #[allow(dead_code)]
 pub struct Runtime {
     host_functions: HostFunctionList,
-    custom_memory_pool_data: Box<CustomMemoryPoolData>
+    custom_memory_pool_data: Box<CustomMemoryPoolData>,
 }
 
 impl Runtime {
@@ -69,7 +71,6 @@ pub struct RuntimeBuilder {
     custom_memory_pool_data: Box<CustomMemoryPoolData>,
 }
 
-
 /// Can't build() until config allocator mode
 impl Default for RuntimeBuilder {
     fn default() -> Self {
@@ -103,7 +104,8 @@ impl RuntimeBuilder {
             malloc_func: malloc_func as *mut c_void,
             realloc_func: realloc_func as *mut c_void,
             free_func: free_func as *mut c_void,
-            user_data: self.custom_memory_pool_data.as_mut() as *mut CustomMemoryPoolData as *mut c_void,
+            user_data: self.custom_memory_pool_data.as_mut() as *mut CustomMemoryPoolData
+                as *mut c_void,
         };
         self
     }
@@ -279,10 +281,7 @@ mod tests {
         for _ in 0..10_000 {
             let ptr = unsafe { wasm_runtime_malloc(1024) };
 
-            assert!(
-                !ptr.is_null(),
-                "runtime allocation failed during iteration"
-            );
+            assert!(!ptr.is_null(), "runtime allocation failed during iteration");
 
             unsafe {
                 wasm_runtime_free(ptr);
@@ -303,27 +302,14 @@ mod tests {
 
         let _runtime = runtime.unwrap();
 
-        let sizes = [
-            16,
-            32,
-            64,
-            128,
-            256,
-            512,
-            1024,
-            4096,
-        ];
+        let sizes = [16, 32, 64, 128, 256, 512, 1024, 4096];
 
         let mut allocations = Vec::new();
 
         for size in sizes {
             let ptr = unsafe { wasm_runtime_malloc(size) };
 
-            assert!(
-                !ptr.is_null(),
-                "failed to allocate {} bytes",
-                size
-            );
+            assert!(!ptr.is_null(), "failed to allocate {} bytes", size);
 
             // Verify the returned memory is writable.
             unsafe {
@@ -381,10 +367,7 @@ mod tests {
         // realloc must preserve the original contents.
         unsafe {
             for i in 0..128 {
-                assert_eq!(
-                    *(ptr as *const u8).add(i),
-                    i as u8
-                );
+                assert_eq!(*(ptr as *const u8).add(i), i as u8);
             }
         }
 
@@ -422,10 +405,7 @@ mod tests {
 
         unsafe {
             for i in 0..512 {
-                assert_eq!(
-                    *(ptr as *const u8).add(i),
-                    (i & 0xff) as u8
-                );
+                assert_eq!(*(ptr as *const u8).add(i), (i & 0xff) as u8);
             }
 
             wasm_runtime_free(ptr);

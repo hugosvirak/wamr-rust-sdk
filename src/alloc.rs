@@ -108,7 +108,11 @@ pub unsafe extern "C" fn malloc_func(
     allocate(data, usage, size as usize)
 }
 
-pub unsafe extern "C" fn free_func(usage: mem_alloc_usage_t, user_data: *mut c_void, ptr: *mut c_void) {
+pub unsafe extern "C" fn free_func(
+    usage: mem_alloc_usage_t,
+    user_data: *mut c_void,
+    ptr: *mut c_void,
+) {
     if user_data.is_null() || ptr.is_null() {
         return;
     }
@@ -208,7 +212,7 @@ pub unsafe extern "C" fn realloc_func(
 mod tests {
     use wamr_sys::mem_alloc_usage_t_Alloc_For_Runtime;
 
-use super::*;
+    use super::*;
     use std::ptr;
 
     const LINEAR_POOL_SIZE: usize = 64 * 1024;
@@ -266,43 +270,23 @@ use super::*;
 
         let user_data = user_data(&data);
 
-        let ptr = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                256,
-            )
-        };
+        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 256) };
 
         assert!(!ptr.is_null());
 
         unsafe {
             ptr::write_bytes(ptr, 0xCD, 256);
 
-            free_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                ptr,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
         }
 
         // The allocator should still be usable after free.
-        let ptr2 = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                256,
-            )
-        };
+        let ptr2 = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 256) };
 
         assert!(!ptr2.is_null());
 
         unsafe {
-            free_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                ptr2,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr2);
         }
     }
 
@@ -311,13 +295,7 @@ use super::*;
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                128,
-            )
-        };
+        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 128) };
 
         assert!(!ptr.is_null());
 
@@ -342,19 +320,12 @@ use super::*;
         // Original data must still be present.
         unsafe {
             for i in 0..128 {
-                assert_eq!(
-                    *(new_ptr as *const u8).add(i),
-                    i as u8
-                );
+                assert_eq!(*(new_ptr as *const u8).add(i), i as u8);
             }
         }
 
         unsafe {
-            free_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                new_ptr,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, new_ptr);
         }
     }
 
@@ -363,13 +334,7 @@ use super::*;
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                256,
-            )
-        };
+        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 256) };
 
         assert!(!ptr.is_null());
 
@@ -393,19 +358,12 @@ use super::*;
 
         unsafe {
             for i in 0..128 {
-                assert_eq!(
-                    *(new_ptr as *const u8).add(i),
-                    (i & 0xFF) as u8
-                );
+                assert_eq!(*(new_ptr as *const u8).add(i), (i & 0xFF) as u8);
             }
         }
 
         unsafe {
-            free_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                new_ptr,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, new_ptr);
         }
     }
 
@@ -427,11 +385,7 @@ use super::*;
         assert!(!ptr.is_null());
 
         unsafe {
-            free_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                ptr,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
         }
     }
 
@@ -440,13 +394,7 @@ use super::*;
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                128,
-            )
-        };
+        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 128) };
 
         assert!(!ptr.is_null());
 
@@ -463,22 +411,12 @@ use super::*;
         assert!(result.is_null());
 
         // Verify allocator is still usable.
-        let ptr2 = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                128,
-            )
-        };
+        let ptr2 = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 128) };
 
         assert!(!ptr2.is_null());
 
         unsafe {
-            free_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                ptr2,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr2);
         }
     }
 
@@ -487,22 +425,12 @@ use super::*;
         let data = create_test_data();
         let user_data = user_data(&data);
 
-        let ptr = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_Runtime,
-                user_data,
-                128,
-            )
-        };
+        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_Runtime, user_data, 128) };
 
         assert!(!ptr.is_null());
 
         unsafe {
-            free_func(
-                mem_alloc_usage_t_Alloc_For_Runtime,
-                user_data,
-                ptr,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_Runtime, user_data, ptr);
         }
     }
 
@@ -514,19 +442,10 @@ use super::*;
         let mut allocations = Vec::new();
 
         for size in [16, 32, 64, 128, 256, 512, 1024] {
-            let ptr = unsafe {
-                malloc_func(
-                    mem_alloc_usage_t_Alloc_For_LinearMemory,
-                    user_data,
-                    size,
-                )
-            };
+            let ptr =
+                unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, size) };
 
-            assert!(
-                !ptr.is_null(),
-                "allocation of {} bytes failed",
-                size
-            );
+            assert!(!ptr.is_null(), "allocation of {} bytes failed", size);
 
             allocations.push((ptr, size));
         }
@@ -541,31 +460,17 @@ use super::*;
         // Free everything.
         for (ptr, _) in allocations {
             unsafe {
-                free_func(
-                    mem_alloc_usage_t_Alloc_For_LinearMemory,
-                    user_data,
-                    ptr,
-                );
+                free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
             }
         }
 
         // The entire pool should be usable again.
-        let ptr = unsafe {
-            malloc_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                1024,
-            )
-        };
+        let ptr = unsafe { malloc_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, 1024) };
 
         assert!(!ptr.is_null());
 
         unsafe {
-            free_func(
-                mem_alloc_usage_t_Alloc_For_LinearMemory,
-                user_data,
-                ptr,
-            );
+            free_func(mem_alloc_usage_t_Alloc_For_LinearMemory, user_data, ptr);
         }
     }
 }
