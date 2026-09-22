@@ -85,8 +85,8 @@ impl Default for RuntimeBuilder {
 }
 
 impl RuntimeBuilder {
-    /// system allocator mode
-    /// allocate memory from system allocator for runtime consumed memory
+    // system allocator mode
+    // allocate memory from system allocator for runtime consumed memory
     // TODO: bring this back. Currently it's only possible to use the use_memory_pool
     // pub fn use_system_allocator(mut self) -> RuntimeBuilder {
     //     self.args.mem_alloc_type = mem_alloc_type_t_Alloc_With_System_Allocator;
