@@ -6,7 +6,7 @@
 //! an exported wasm function.
 //! get one via `Function::find_export_func()`
 
-use std::{ffi::CString, marker::PhantomData};
+use std::{ffi::CString, rc::Rc};
 use wamr_sys::{
     wasm_exec_env_t, wasm_func_get_param_count, wasm_func_get_result_count,
     wasm_func_get_result_types, wasm_function_inst_t, wasm_runtime_call_wasm,
@@ -21,42 +21,33 @@ use crate::{
     helper::exception_to_string, instance::Instance, value::WasmValue, ExecError, RuntimeError,
 };
 
-pub struct Function<'instance> {
+pub struct Function {
     function: wasm_function_inst_t,
-    _phantom: PhantomData<Instance<'instance>>,
+    instance: Rc<Instance>,
 }
 
-impl<'instance> Function<'instance> {
+impl Function {
     /// find a function by name
     ///
     /// # Error
     ///
     /// Return `RuntimeError::FunctionNotFound` if failed.
-    pub fn find_export_func(
-        instance: &'instance Instance<'instance>,
-        name: &str,
-    ) -> Result<Self, RuntimeError> {
+    pub fn find_export_func(instance: Rc<Instance>, name: &str) -> Result<Self, RuntimeError> {
         let name = CString::new(name).expect("CString::new failed");
         let function =
             unsafe { wasm_runtime_lookup_function(instance.get_inner_instance(), name.as_ptr()) };
         match function.is_null() {
             true => Err(RuntimeError::FunctionNotFound),
-            false => Ok(Function {
-                function,
-                _phantom: PhantomData,
-            }),
+            false => Ok(Function { function, instance }),
         }
     }
 
     #[allow(non_upper_case_globals)]
     #[allow(non_snake_case)]
-    fn parse_result(
-        &self,
-        instance: &Instance<'instance>,
-        result: Vec<u32>,
-    ) -> Result<Vec<WasmValue>, RuntimeError> {
-        let result_count =
-            unsafe { wasm_func_get_result_count(self.function, instance.get_inner_instance()) };
+    fn parse_result(&self, result: Vec<u32>) -> Result<Vec<WasmValue>, RuntimeError> {
+        let result_count = unsafe {
+            wasm_func_get_result_count(self.function, self.instance.get_inner_instance())
+        };
         if result_count == 0 {
             return Ok(vec![WasmValue::Void]);
         }
@@ -65,7 +56,7 @@ impl<'instance> Function<'instance> {
         unsafe {
             wasm_func_get_result_types(
                 self.function,
-                instance.get_inner_instance(),
+                self.instance.get_inner_instance(),
                 result_types.as_mut_ptr(),
             );
         }
@@ -111,13 +102,9 @@ impl<'instance> Function<'instance> {
     ///
     /// Return `RuntimeError::ExecutionError` if failed.
     #[allow(non_upper_case_globals)]
-    pub fn call(
-        &self,
-        instance: &'instance Instance<'instance>,
-        params: &Vec<WasmValue>,
-    ) -> Result<Vec<WasmValue>, RuntimeError> {
+    pub fn call(&self, params: &Vec<WasmValue>) -> Result<Vec<WasmValue>, RuntimeError> {
         let param_count =
-            unsafe { wasm_func_get_param_count(self.function, instance.get_inner_instance()) };
+            unsafe { wasm_func_get_param_count(self.function, self.instance.get_inner_instance()) };
         if param_count > params.len() as u32 {
             return Err(RuntimeError::ExecutionError(ExecError {
                 message: "invalid parameters".to_string(),
@@ -126,8 +113,9 @@ impl<'instance> Function<'instance> {
         }
 
         // Maintain sufficient allocated space in the vector rather than just declaring its capacity.
-        let result_count =
-            unsafe { wasm_func_get_result_count(self.function, instance.get_inner_instance()) };
+        let result_count = unsafe {
+            wasm_func_get_result_count(self.function, self.instance.get_inner_instance())
+        };
         let capacity = std::cmp::max(param_count, result_count) as usize * 4;
 
         // Populate the parameters in the sufficiently allocated argv vector
@@ -140,24 +128,24 @@ impl<'instance> Function<'instance> {
         let call_result: bool;
         unsafe {
             let exec_env: wasm_exec_env_t =
-                wasm_runtime_get_exec_env_singleton(instance.get_inner_instance());
+                wasm_runtime_get_exec_env_singleton(self.instance.get_inner_instance());
             call_result =
                 wasm_runtime_call_wasm(exec_env, self.function, param_count, argv.as_mut_ptr());
         };
 
         if !call_result {
             unsafe {
-                let exception_c = wasm_runtime_get_exception(instance.get_inner_instance());
+                let exception_c = wasm_runtime_get_exception(self.instance.get_inner_instance());
                 let error_info = ExecError {
                     message: exception_to_string(exception_c),
-                    exit_code: wasm_runtime_get_wasi_exit_code(instance.get_inner_instance()),
+                    exit_code: wasm_runtime_get_wasi_exit_code(self.instance.get_inner_instance()),
                 };
                 return Err(RuntimeError::ExecutionError(error_info));
             }
         }
 
         // there is no out of bounds problem, because we have precalculated the safe vec size
-        self.parse_result(instance, argv)
+        self.parse_result(argv)
     }
 }
 
@@ -166,12 +154,15 @@ mod tests {
     use super::*;
     use crate::{module::Module, runtime::Runtime, wasi_context::WasiCtxBuilder};
     use std::{
-        process::{Command, Stdio}, path::Path, path::PathBuf, env, fs,
+        env, fs,
+        path::Path,
+        path::PathBuf,
+        process::{Command, Stdio},
     };
 
     #[test]
     fn test_func_in_wasm32_unknown() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Rc::new(Runtime::new().unwrap());
 
         // (module
         //   (func (export "add") (param i64 i32) (result i32 i64)
@@ -199,24 +190,24 @@ mod tests {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let module = Module::from_vec(&runtime, binary, "");
+        let module = Module::from_vec(runtime, binary, "");
         assert!(module.is_ok());
-        let module = module.unwrap();
+        let module = Rc::new(module.unwrap());
 
-        let instance = Instance::new(&runtime, &module, 1024);
+        let instance = Instance::new(module, 1024);
         assert!(instance.is_ok());
-        let instance: &Instance = &instance.unwrap();
+        let instance = Rc::new(instance.unwrap());
 
         //
         // run add()
         //
 
-        let function = Function::find_export_func(instance, "add");
+        let function = Function::find_export_func(instance.clone(), "add");
         assert!(function.is_ok());
         let function = function.unwrap();
 
         let params: Vec<WasmValue> = vec![WasmValue::I64(10), WasmValue::I32(20)];
-        let call_result = function.call(instance, &params);
+        let call_result = function.call(&params);
         assert!(call_result.is_ok());
         assert_eq!(
             call_result.unwrap(),
@@ -232,7 +223,7 @@ mod tests {
         let function = function.unwrap();
 
         let params: Vec<WasmValue> = Vec::new();
-        let call_result = function.call(instance, &params);
+        let call_result = function.call(&params);
         assert!(call_result.is_ok());
         assert_eq!(
             call_result.unwrap(),
@@ -242,45 +233,46 @@ mod tests {
 
     #[test]
     fn test_func_in_wasm32_wasi() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Rc::new(Runtime::new().unwrap());
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test");
         d.push("gcd_wasm32_wasi.wasm");
-        let module = Module::from_file(&runtime, d.as_path());
+        let module = Module::from_file(runtime, d.as_path());
         assert!(module.is_ok());
-        let mut module = module.unwrap();
-
         let wasi_ctx = WasiCtxBuilder::new()
             .set_pre_open_path(vec!["."], vec![])
             .build();
-        module.set_wasi_context(wasi_ctx);
 
-        let instance = Instance::new(&runtime, &module, 1024 * 64);
+        let mut module = module.unwrap();
+        module.set_wasi_context(wasi_ctx);
+        let module = Rc::new(module);
+
+        let instance = Instance::new(module, 1024 * 64);
         assert!(instance.is_ok());
-        let instance: &Instance = &instance.unwrap();
+        let instance = Rc::new(instance.unwrap());
 
         let function = Function::find_export_func(instance, "gcd");
         assert!(function.is_ok());
         let function = function.unwrap();
 
         let params: Vec<WasmValue> = vec![WasmValue::I32(9), WasmValue::I32(27)];
-        let result = function.call(instance, &params);
+        let result = function.call(&params);
         assert_eq!(result.unwrap(), vec![WasmValue::I32(9)]);
 
         let params: Vec<WasmValue> = vec![WasmValue::I32(0), WasmValue::I32(27)];
-        let result = function.call(instance, &params);
+        let result = function.call(&params);
         assert_eq!(result.unwrap(), vec![WasmValue::I32(27)]);
     }
 
     #[test]
     fn test_func_in_wasm32_wasi_w_args() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Rc::new(Runtime::new().unwrap());
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test");
         d.push("wasi-demo-app.wasm");
-        let module = Module::from_file(&runtime, d.as_path());
+        let module = Module::from_file(runtime, d.as_path());
         assert!(module.is_ok());
         let mut module = module.unwrap();
 
@@ -290,22 +282,22 @@ mod tests {
             .build();
         module.set_wasi_context(wasi_ctx);
 
-        let instance = Instance::new(&runtime, &module, 1024 * 64);
+        let instance = Instance::new(module.into(), 1024 * 64);
         assert!(instance.is_ok());
-        let instance: &Instance = &instance.unwrap();
+        let instance = Rc::new(instance.unwrap());
 
         let function = Function::find_export_func(instance, "_start");
         assert!(function.is_ok());
         let function = function.unwrap();
 
-        let result = function.call(instance, &vec![]);
+        let result = function.call(&vec![]);
         assert!(result.is_ok());
         println!("{:?}", result.unwrap());
     }
 
     #[test]
     fn test_func_in_multi_v128_return() {
-        let runtime = Runtime::new().unwrap();
+        let runtime = Rc::new(Runtime::new().unwrap());
 
         // (module
         // (func (export "multi") (result f64 f32 i32 i64 f64 f32 i32 i64 v128 v128 v128 v128)
@@ -338,7 +330,8 @@ mod tests {
         };
         let base_entries = fs::read_dir(base);
         assert!(base_entries.is_ok());
-        let found = base_entries.unwrap()
+        let found = base_entries
+            .unwrap()
             .filter_map(|entry| entry.ok())
             .map(|entry| {
                 let path = entry.path();
@@ -350,8 +343,20 @@ mod tests {
                 (path, name)
             })
             .filter_map(|(path, name)| {
-                if name.starts_with("wamr-sys") && path.join("out").join("wamrcbuild").join("bin").join("wamrc").exists() {
-                    Some(path.join("out").join("wamrcbuild").join("bin").join("wamrc"))
+                if name.starts_with("wamr-sys")
+                    && path
+                        .join("out")
+                        .join("wamrcbuild")
+                        .join("bin")
+                        .join("wamrc")
+                        .exists()
+                {
+                    Some(
+                        path.join("out")
+                            .join("wamrcbuild")
+                            .join("bin")
+                            .join("wamrc"),
+                    )
                 } else {
                     None
                 }
@@ -365,27 +370,27 @@ mod tests {
             .arg("-o")
             .arg(aot_dest.clone())
             .arg(wasm_src.clone())
-            .stderr(Stdio::piped())  
+            .stderr(Stdio::piped())
             .stdout(Stdio::piped())
             .output()
             .unwrap();
         assert!(String::from_utf8_lossy(&wamrc_output.stdout).contains("Compile success"));
 
-        let module = Module::from_file(&runtime, aot_dest.as_path());
+        let module = Module::from_file(runtime, aot_dest.as_path());
         assert!(module.is_ok());
-        let module = module.unwrap();
+        let module = Rc::new(module.unwrap());
 
-        let instance = Instance::new(&runtime, &module, 1024 * 64);
+        let instance = Instance::new(module, 1024 * 64);
         assert!(instance.is_ok());
-        let instance: &Instance = &instance.unwrap();
+        let instance = Rc::new(instance.unwrap());
 
         let function = Function::find_export_func(instance, "multi");
         assert!(function.is_ok());
         let function = function.unwrap();
 
-        let wrapped_result = function.call(instance, &vec![]);
+        let wrapped_result = function.call(&vec![]);
         let unwrapped_result = wrapped_result.unwrap();
-        
+
         assert_eq!(unwrapped_result.len(), 12);
         assert_eq!(
             unwrapped_result,

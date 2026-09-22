@@ -146,6 +146,7 @@ use std::fmt;
 use std::io;
 pub use wamr_sys as sys;
 
+pub mod alloc;
 pub mod function;
 mod helper;
 pub mod host_function;
@@ -154,7 +155,6 @@ pub mod module;
 pub mod runtime;
 pub mod value;
 pub mod wasi_context;
-pub mod alloc;
 
 #[derive(Debug)]
 pub struct ExecError {

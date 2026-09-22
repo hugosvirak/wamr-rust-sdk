@@ -70,6 +70,7 @@ mod tests {
     };
     use std::env;
     use std::path::PathBuf;
+    use std::rc::Rc;
 
     extern "C" fn extra() -> i32 {
         100
@@ -78,29 +79,35 @@ mod tests {
     #[test]
     #[ignore]
     fn test_host_function() {
-        let runtime = Runtime::builder()
-            .use_system_allocator()
-            .register_host_function("extra", extra as *mut c_void)
-            .build()
-            .unwrap();
+        let runtime = Rc::new(
+            Runtime::builder()
+                // .use_system_allocator()
+                .register_host_function("extra", extra as *mut c_void)
+                .use_memory_pool(
+                    vec![0; 100 * 1024].into_boxed_slice(),
+                    vec![0; 100 * 1024].into_boxed_slice(),
+                )
+                .build()
+                .unwrap(),
+        );
 
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test");
         d.push("add_extra_wasm32_wasi.wasm");
-        let module = Module::from_file(&runtime, d.as_path());
+        let module = Module::from_file(runtime, d.as_path());
         assert!(module.is_ok());
-        let module = module.unwrap();
+        let module = Rc::new(module.unwrap());
 
-        let instance = Instance::new(&runtime, &module, 1024 * 64);
+        let instance = Instance::new(module, 1024 * 64);
         assert!(instance.is_ok());
-        let instance: &Instance = &instance.unwrap();
+        let instance = Rc::new(instance.unwrap());
 
         let function = Function::find_export_func(instance, "add");
         assert!(function.is_ok());
         let function = function.unwrap();
 
         let params: Vec<WasmValue> = vec![WasmValue::I32(8), WasmValue::I32(8)];
-        let result = function.call(instance, &params);
+        let result = function.call(&params);
         assert_eq!(result.unwrap(), vec![WasmValue::I32(116)]);
     }
 }

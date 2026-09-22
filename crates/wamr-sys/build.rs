@@ -189,7 +189,11 @@ fn build_wamrc(wamr_root: &Path) {
     Config::new(&wamr_compiler_path)
         .out_dir(wamrc_build_path)
         .define("WAMR_BUILD_WITH_CUSTOM_LLVM", "1")
-        .define("LLVM_DIR", env::var("LLVM_LIB_CFG_PATH").expect("LLVM_LIB_CFG_PATH isn't specified in config.toml"))
+        .define(
+            "LLVM_DIR",
+            env::var("LLVM_LIB_CFG_PATH")
+                .expect("LLVM_LIB_CFG_PATH isn't specified in config.toml"),
+        )
         .build();
 }
 

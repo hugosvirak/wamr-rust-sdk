@@ -10,13 +10,13 @@ use crate::{
     helper::error_buf_to_string, helper::DEFAULT_ERROR_BUF_SIZE, runtime::Runtime,
     wasi_context::WasiCtx, RuntimeError,
 };
-use core::marker::PhantomData;
 use std::{
     ffi::{c_char, CString},
     fs::File,
     io::Read,
     path::Path,
     ptr,
+    rc::Rc,
     string::String,
     vec::Vec,
 };
@@ -27,24 +27,23 @@ use wamr_sys::{
 };
 
 #[allow(dead_code)]
-#[derive(Debug)]
-pub struct Module<'runtime> {
+pub struct Module {
     name: String,
     module: wasm_module_t,
     // to keep the module content in memory
     content: Vec<u8>,
     wasi_ctx: WasiCtx,
-    _phantom: PhantomData<&'runtime Runtime>,
+    runtime: Rc<Runtime>,
 }
 
-impl<'runtime> Module<'runtime> {
+impl Module {
     /// compile a module with the given wasm file path, use the file name as the module name
     ///
     /// # Error
     ///
     /// If the file does not exist or the file cannot be read, an `RuntimeError::WasmFileFSError` will be returned.
     /// If the wasm file is not a valid wasm file, an `RuntimeError::CompilationError` will be returned.
-    pub fn from_file(runtime: &'runtime Runtime, wasm_file: &Path) -> Result<Self, RuntimeError> {
+    pub fn from_file(runtime: Rc<Runtime>, wasm_file: &Path) -> Result<Self, RuntimeError> {
         let name = wasm_file.file_name().unwrap().to_str().unwrap();
         let mut wasm_file = File::open(wasm_file)?;
 
@@ -61,7 +60,7 @@ impl<'runtime> Module<'runtime> {
     /// If the file does not exist or the file cannot be read, an `RuntimeError::WasmFileFSError` will be returned.
     /// If the wasm file is not a valid wasm file, an `RuntimeError::CompilationError` will be returned.
     pub fn from_vec(
-        _runtime: &'runtime Runtime,
+        runtime: Rc<Runtime>,
         mut content: Vec<u8>,
         name: &str,
     ) -> Result<Self, RuntimeError> {
@@ -109,7 +108,7 @@ impl<'runtime> Module<'runtime> {
             module,
             content,
             wasi_ctx: WasiCtx::default(),
-            _phantom: PhantomData,
+            runtime,
         })
     }
 
@@ -190,7 +189,7 @@ impl<'runtime> Module<'runtime> {
     }
 }
 
-impl Drop for Module<'_> {
+impl Drop for Module {
     fn drop(&mut self) {
         unsafe {
             wasm_runtime_unload(self.module);
@@ -212,7 +211,7 @@ mod tests {
 
         let runtime = runtime.unwrap();
 
-        let module = Module::from_file(&runtime, Path::new("not_exist"));
+        let module = Module::from_file(runtime.into(), Path::new("not_exist"));
         assert!(module.is_err());
     }
 
@@ -234,7 +233,7 @@ mod tests {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let module = Module::from_vec(&runtime, binary, "");
+        let module = Module::from_vec(runtime.into(), binary, "");
         assert!(module.is_ok());
     }
 
@@ -245,7 +244,7 @@ mod tests {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("resources/test");
         d.push("gcd_wasm32_wasi.wasm");
-        let module = Module::from_file(&runtime, d.as_path());
+        let module = Module::from_file(runtime.into(), d.as_path());
         assert!(module.is_ok());
     }
 
@@ -267,7 +266,7 @@ mod tests {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let module = Module::from_vec(&runtime, binary, "add");
+        let module = Module::from_vec(runtime.into(), binary, "add");
         assert!(module.is_ok());
         let mut module = module.unwrap();
 
@@ -299,7 +298,7 @@ mod tests {
         ];
         let binary = binary.into_iter().map(|c| c as u8).collect::<Vec<u8>>();
 
-        let module = Module::from_vec(&runtime, binary, "add")?;
+        let module = Module::from_vec(runtime.into(), binary, "add")?;
 
         assert_eq!(module.get_name(), "add");
 
