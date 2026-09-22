@@ -2,6 +2,15 @@
 
 ## WAMR Rust SDK
 
+### Fork of: https://github.com/wasm-micro-runtime/wamr-rust-sdk/
+
+#### I'd strongly recommend to not use this fork (because it's not very stable) unless you're ready to open issues (and I'll be happy to help).
+
+#### Motivation of the fork: 
+- better use of memory (i.e. can use memory pool for linear memory now)
+- updated WAMR
+- easier to use interface (removed lifetimes from client facing code..)
+
 ### Overview
 
 WAMR Rust SDK provides Rust language bindings for WAMR. It is the wrapper
