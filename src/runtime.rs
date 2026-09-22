@@ -7,20 +7,22 @@
 //! Every process should have only one instance of this runtime by call
 //! `Runtime::new()` or `Runtime::builder().build()` once.
 
+
 use std::ffi::c_void;
 
 use wamr_sys::{
-    mem_alloc_type_t_Alloc_With_Pool, mem_alloc_type_t_Alloc_With_System_Allocator,
-    wasm_runtime_destroy, wasm_runtime_full_init, wasm_runtime_init, NativeSymbol,
-    RunningMode_Mode_Interp, RunningMode_Mode_LLVM_JIT, RuntimeInitArgs,
+    mem_alloc_type_t_Alloc_With_Allocator,
+    mem_alloc_type_t_Alloc_With_System_Allocator,
+    wasm_runtime_destroy, wasm_runtime_full_init, wasm_runtime_init, MemAllocOption__bindgen_ty_2,
+    NativeSymbol, RunningMode_Mode_Interp, RunningMode_Mode_LLVM_JIT, RuntimeInitArgs,
 };
 
-use crate::{host_function::HostFunctionList, RuntimeError};
+use crate::{RuntimeError, alloc::{CustomMemoryPoolData, free_func, malloc_func, realloc_func}, host_function::HostFunctionList};
 
 #[allow(dead_code)]
-#[derive(Debug)]
 pub struct Runtime {
     host_functions: HostFunctionList,
+    custom_memory_pool_data: Box<CustomMemoryPoolData>
 }
 
 impl Runtime {
@@ -44,6 +46,7 @@ impl Runtime {
         match unsafe { wasm_runtime_init() } {
             true => Ok(Runtime {
                 host_functions: HostFunctionList::new("empty"),
+                custom_memory_pool_data: Box::new(CustomMemoryPoolData::default()),
             }),
             false => Err(RuntimeError::InitializationFailure),
         }
@@ -63,7 +66,9 @@ impl Drop for Runtime {
 pub struct RuntimeBuilder {
     args: RuntimeInitArgs,
     host_functions: HostFunctionList,
+    custom_memory_pool_data: Box<CustomMemoryPoolData>,
 }
+
 
 /// Can't build() until config allocator mode
 impl Default for RuntimeBuilder {
@@ -72,6 +77,7 @@ impl Default for RuntimeBuilder {
         RuntimeBuilder {
             args,
             host_functions: HostFunctionList::new("host"),
+            custom_memory_pool_data: Box::new(CustomMemoryPoolData::default()),
         }
     }
 }
@@ -84,12 +90,21 @@ impl RuntimeBuilder {
         self
     }
 
-    /// system allocator mode
-    /// allocate memory from pool, as a pre-allocated buffer, for runtime consumed memory
-    pub fn use_memory_pool(mut self, mut pool: Vec<u8>) -> RuntimeBuilder {
-        self.args.mem_alloc_type = mem_alloc_type_t_Alloc_With_Pool;
-        self.args.mem_alloc_option.pool.heap_buf = pool.as_mut_ptr() as *mut c_void;
-        self.args.mem_alloc_option.pool.heap_size = pool.len() as u32;
+    // Uses custom memory pools for the runtime and linear data
+    pub fn use_memory_pool(
+        mut self,
+        runtime_memory_pool: Box<[u8]>,
+        linear_memory_pool: Box<[u8]>,
+    ) -> RuntimeBuilder {
+        self.custom_memory_pool_data.runtime_memory_pool = Some(runtime_memory_pool);
+        self.custom_memory_pool_data.linear_memory_pool = Some(linear_memory_pool);
+        self.args.mem_alloc_type = mem_alloc_type_t_Alloc_With_Allocator;
+        self.args.mem_alloc_option.allocator = MemAllocOption__bindgen_ty_2 {
+            malloc_func: malloc_func as *mut c_void,
+            realloc_func: realloc_func as *mut c_void,
+            free_func: free_func as *mut c_void,
+            user_data: self.custom_memory_pool_data.as_mut() as *mut CustomMemoryPoolData as *mut c_void,
+        };
         self
     }
 
@@ -132,10 +147,13 @@ impl RuntimeBuilder {
             self.args.n_native_symbols = native_symbols.len() as u32;
             self.args.native_symbols = native_symbols.as_ptr() as *mut NativeSymbol;
 
+            self.custom_memory_pool_data.init();
+
             wasm_runtime_full_init(&mut self.args)
         } {
             true => Ok(Runtime {
                 host_functions: self.host_functions,
+                custom_memory_pool_data: self.custom_memory_pool_data,
             }),
             false => Err(RuntimeError::InitializationFailure),
         }
@@ -145,7 +163,7 @@ impl RuntimeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamr_sys::{wasm_runtime_free, wasm_runtime_malloc};
+    use wamr_sys::{wasm_runtime_free, wasm_runtime_malloc, wasm_runtime_realloc};
 
     #[test]
     #[ignore]
@@ -217,5 +235,226 @@ mod tests {
         let small_buf = unsafe { wasm_runtime_malloc(16) };
         assert!(!small_buf.is_null());
         unsafe { wasm_runtime_free(small_buf) };
+    }
+
+    #[test]
+    fn test_runtime_builder_memory_pool() {
+        let runtime_pool = vec![0u8; 256 * 1024].into_boxed_slice();
+        let linear_pool = vec![0u8; 64 * 1024].into_boxed_slice();
+
+        let runtime = Runtime::builder()
+            .use_memory_pool(runtime_pool, linear_pool)
+            .build();
+
+        assert!(runtime.is_ok());
+
+        let runtime = runtime.unwrap();
+
+        // WAMR runtime allocation should work through the custom allocator.
+        let ptr = unsafe { wasm_runtime_malloc(16) };
+        assert!(!ptr.is_null());
+
+        unsafe {
+            wasm_runtime_free(ptr);
+        }
+
+        drop(runtime);
+    }
+
+    #[test]
+    fn test_runtime_builder_memory_pool_repeated_alloc_free() {
+        let runtime_pool = vec![0u8; 256 * 1024].into_boxed_slice();
+        let linear_pool = vec![0u8; 64 * 1024].into_boxed_slice();
+
+        let runtime = Runtime::builder()
+            .use_memory_pool(runtime_pool, linear_pool)
+            .build();
+
+        assert!(runtime.is_ok());
+
+        let _runtime = runtime.unwrap();
+
+        // If free/reuse is working correctly, this should not
+        // progressively consume the runtime pool.
+        for _ in 0..10_000 {
+            let ptr = unsafe { wasm_runtime_malloc(1024) };
+
+            assert!(
+                !ptr.is_null(),
+                "runtime allocation failed during iteration"
+            );
+
+            unsafe {
+                wasm_runtime_free(ptr);
+            }
+        }
+    }
+
+    #[test]
+    fn test_runtime_builder_memory_pool_multiple_allocations() {
+        let runtime_pool = vec![0u8; 256 * 1024].into_boxed_slice();
+        let linear_pool = vec![0u8; 64 * 1024].into_boxed_slice();
+
+        let runtime = Runtime::builder()
+            .use_memory_pool(runtime_pool, linear_pool)
+            .build();
+
+        assert!(runtime.is_ok());
+
+        let _runtime = runtime.unwrap();
+
+        let sizes = [
+            16,
+            32,
+            64,
+            128,
+            256,
+            512,
+            1024,
+            4096,
+        ];
+
+        let mut allocations = Vec::new();
+
+        for size in sizes {
+            let ptr = unsafe { wasm_runtime_malloc(size) };
+
+            assert!(
+                !ptr.is_null(),
+                "failed to allocate {} bytes",
+                size
+            );
+
+            // Verify the returned memory is writable.
+            unsafe {
+                std::ptr::write_bytes(ptr, 0xAB, size as usize);
+            }
+
+            allocations.push(ptr);
+        }
+
+        for ptr in allocations {
+            unsafe {
+                wasm_runtime_free(ptr);
+            }
+        }
+
+        // Verify the allocator is still usable after freeing
+        // all previous allocations.
+        let ptr = unsafe { wasm_runtime_malloc(4096) };
+
+        assert!(!ptr.is_null());
+
+        unsafe {
+            wasm_runtime_free(ptr);
+        }
+    }
+
+    #[test]
+    fn test_runtime_builder_memory_pool_realloc() {
+        let runtime_pool = vec![0u8; 256 * 1024].into_boxed_slice();
+        let linear_pool = vec![0u8; 64 * 1024].into_boxed_slice();
+
+        let runtime = Runtime::builder()
+            .use_memory_pool(runtime_pool, linear_pool)
+            .build();
+
+        assert!(runtime.is_ok());
+
+        let _runtime = runtime.unwrap();
+
+        let ptr = unsafe { wasm_runtime_malloc(128) };
+
+        assert!(!ptr.is_null());
+
+        // Put known data into the allocation.
+        unsafe {
+            for i in 0..128 {
+                *(ptr as *mut u8).add(i) = i as u8;
+            }
+        }
+
+        let ptr = unsafe { wasm_runtime_realloc(ptr, 256) };
+
+        assert!(!ptr.is_null());
+
+        // realloc must preserve the original contents.
+        unsafe {
+            for i in 0..128 {
+                assert_eq!(
+                    *(ptr as *const u8).add(i),
+                    i as u8
+                );
+            }
+        }
+
+        unsafe {
+            wasm_runtime_free(ptr);
+        }
+    }
+
+    #[test]
+    fn test_runtime_builder_memory_pool_realloc_shrink() {
+        let runtime_pool = vec![0u8; 256 * 1024].into_boxed_slice();
+        let linear_pool = vec![0u8; 64 * 1024].into_boxed_slice();
+
+        let runtime = Runtime::builder()
+            .use_memory_pool(runtime_pool, linear_pool)
+            .build();
+
+        assert!(runtime.is_ok());
+
+        let _runtime = runtime.unwrap();
+
+        let ptr = unsafe { wasm_runtime_malloc(4096) };
+
+        assert!(!ptr.is_null());
+
+        unsafe {
+            for i in 0..4096 {
+                *(ptr as *mut u8).add(i) = (i & 0xff) as u8;
+            }
+        }
+
+        let ptr = unsafe { wasm_runtime_realloc(ptr, 512) };
+
+        assert!(!ptr.is_null());
+
+        unsafe {
+            for i in 0..512 {
+                assert_eq!(
+                    *(ptr as *const u8).add(i),
+                    (i & 0xff) as u8
+                );
+            }
+
+            wasm_runtime_free(ptr);
+        }
+    }
+
+    #[test]
+    fn test_runtime_builder_memory_pool_is_reusable_after_runtime_drop() {
+        let runtime_pool = vec![0u8; 256 * 1024].into_boxed_slice();
+        let linear_pool = vec![0u8; 64 * 1024].into_boxed_slice();
+
+        {
+            let runtime = Runtime::builder()
+                .use_memory_pool(runtime_pool, linear_pool)
+                .build();
+
+            assert!(runtime.is_ok());
+
+            let runtime = runtime.unwrap();
+
+            let ptr = unsafe { wasm_runtime_malloc(4096) };
+
+            assert!(!ptr.is_null());
+
+            unsafe {
+                wasm_runtime_free(ptr);
+            }
+
+            drop(runtime);
+        }
     }
 }
