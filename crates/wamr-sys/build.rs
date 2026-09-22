@@ -136,7 +136,9 @@ fn setup_config(
         .define("WAMR_BUILD_MULTI_MODULE", &enable_multi_module)
         .define("WAMR_BUILD_DUMP_CALL_STACK", &enable_dump_call_stack)
         .define("WAMR_BUILD_CUSTOM_NAME_SECTION", &enable_name_section)
-        .define("WAMR_BUILD_LOAD_CUSTOM_SECTION", &enable_custom_section);
+        .define("WAMR_BUILD_LOAD_CUSTOM_SECTION", &enable_custom_section)
+        .define("WAMR_BUILD_ALLOC_WITH_USAGE", "1")
+        .define("WAMR_BUILD_ALLOC_WITH_USER_DATA", "1");
 
     // always assume non-empty strings for these environment variables
 

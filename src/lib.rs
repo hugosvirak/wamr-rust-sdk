@@ -154,6 +154,7 @@ pub mod module;
 pub mod runtime;
 pub mod value;
 pub mod wasi_context;
+pub mod alloc;
 
 #[derive(Debug)]
 pub struct ExecError {
