@@ -112,6 +112,11 @@ pub unsafe extern "C" fn malloc_func(
     user_data: *mut c_void,
     size: u32,
 ) -> *mut c_void {
+    println!(
+        "malloc_func: usage={:?}, user_data={:p}, size={}",
+        usage, user_data, size
+    );
+
     if user_data.is_null() {
         return null_mut();
     }
