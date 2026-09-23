@@ -9,7 +9,7 @@ use wamr_sys::{mem_alloc_usage_t, mem_alloc_usage_t_Alloc_For_LinearMemory};
 
 const ALIGNMENT: usize = std::mem::align_of::<AllocationHeader>();
 
-#[repr(C)]
+#[repr(C, align(8))]
 struct AllocationHeader {
     size: usize,
 }
