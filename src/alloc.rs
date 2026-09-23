@@ -1,5 +1,5 @@
 use std::{
-    alloc::{GlobalAlloc, Layout}, ffi::c_void, ptr::{self, null_mut}, sync::Mutex,
+    alloc::{GlobalAlloc, Layout}, ffi::c_void, ptr::{self, null_mut},
 };
 
 use embedded_alloc::LlffHeap;
@@ -11,8 +11,6 @@ const ALIGNMENT: usize = std::mem::align_of::<AllocationHeader>();
 struct AllocationHeader {
     size: usize,
 }
-
-static ALLOC_MUTEX: Mutex<()> = Mutex::new(());
 
 pub struct CustomMemoryPoolData {
     pub linear_memory_allocator: LlffHeap,
@@ -109,9 +107,6 @@ pub unsafe extern "C" fn malloc_func(
     user_data: *mut c_void,
     size: u32,
 ) -> *mut c_void {
-    let _guard = ALLOC_MUTEX.lock().unwrap();
-
-
     if user_data.is_null() {
         return null_mut();
     }
@@ -126,8 +121,6 @@ pub unsafe extern "C" fn free_func(
     user_data: *mut c_void,
     ptr: *mut c_void,
 ) {
-    let _guard = ALLOC_MUTEX.lock().unwrap();
-
     if user_data.is_null() || ptr.is_null() {
         return;
     }
@@ -163,8 +156,6 @@ pub unsafe extern "C" fn realloc_func(
     ptr: *mut c_void,
     size: u32,
 ) -> *mut c_void {
-    let _guard = ALLOC_MUTEX.lock().unwrap();
-
     if user_data.is_null() {
         return null_mut();
     }
