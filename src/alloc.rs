@@ -1,7 +1,5 @@
 use std::{
-    alloc::{GlobalAlloc, Layout},
-    ffi::c_void,
-    ptr::{self, null_mut},
+    alloc::{GlobalAlloc, Layout}, ffi::c_void, ptr::{self, null_mut}, sync::Mutex,
 };
 
 use embedded_alloc::LlffHeap;
@@ -13,6 +11,8 @@ const ALIGNMENT: usize = std::mem::align_of::<AllocationHeader>();
 struct AllocationHeader {
     size: usize,
 }
+
+static ALLOC_MUTEX: Mutex<()> = Mutex::new(());
 
 pub struct CustomMemoryPoolData {
     pub linear_memory_allocator: LlffHeap,
@@ -109,6 +109,9 @@ pub unsafe extern "C" fn malloc_func(
     user_data: *mut c_void,
     size: u32,
 ) -> *mut c_void {
+    let _guard = ALLOC_MUTEX.lock().unwrap();
+
+
     if user_data.is_null() {
         return null_mut();
     }
@@ -123,6 +126,8 @@ pub unsafe extern "C" fn free_func(
     user_data: *mut c_void,
     ptr: *mut c_void,
 ) {
+    let _guard = ALLOC_MUTEX.lock().unwrap();
+
     if user_data.is_null() || ptr.is_null() {
         return;
     }
@@ -158,22 +163,40 @@ pub unsafe extern "C" fn realloc_func(
     ptr: *mut c_void,
     size: u32,
 ) -> *mut c_void {
+    let _guard = ALLOC_MUTEX.lock().unwrap();
+
     if user_data.is_null() {
         return null_mut();
     }
 
+    let data = &*(user_data as *const CustomMemoryPoolData);
+
     // realloc(NULL, size) behaves like malloc(size).
     if ptr.is_null() {
-        return malloc_func(usage, user_data, size);
+        return allocate(data, usage, size as usize);
     }
 
     // realloc(ptr, 0) behaves like free(ptr).
     if size == 0 {
-        free_func(usage, user_data, ptr);
+        let header_ptr = get_header(ptr);
+        let header = ptr::read(header_ptr);
+
+        let header_size = std::mem::size_of::<AllocationHeader>();
+        let total_size = match header_size.checked_add(header.size) {
+            Some(size) => size,
+            None => return null_mut(),
+        };
+
+        let layout = match Layout::from_size_align(total_size, ALIGNMENT) {
+            Ok(layout) => layout,
+            Err(_) => return null_mut(),
+        };
+
+        let allocator = data.allocator(usage);
+        allocator.dealloc(header_ptr as *mut u8, layout);
+
         return null_mut();
     }
-
-    let data = &*(user_data as *const CustomMemoryPoolData);
 
     let header_ptr = get_header(ptr);
     let old_header = &*header_ptr;
@@ -204,13 +227,10 @@ pub unsafe extern "C" fn realloc_func(
         allocator.realloc(header_ptr as *mut u8, old_layout, new_total_size);
 
     if new_raw.is_null() {
-        // Original allocation remains valid.
         return null_mut();
     }
 
-    // realloc may move the allocation, so update the header.
     let new_header = new_raw as *mut AllocationHeader;
-
     ptr::write(new_header, AllocationHeader { size: new_size });
 
     new_raw.add(header_size) as *mut c_void
